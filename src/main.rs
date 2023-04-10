@@ -1,43 +1,46 @@
-use aki_engine;
 use aki_engine::{
     utility, // the mod define some fixed functions that have been learned before.
     utility::constants::*,
+    utility::debug::*,
     utility::share,
 };
 
+use ash::version::DeviceV1_0;
 use ash::version::InstanceV1_0;
 use ash::vk;
-use ash::{vk_version_major, vk_version_minor, vk_version_patch};
 use winit::event::{Event, VirtualKeyCode, ElementState, KeyboardInput, WindowEvent};
 use winit::event_loop::{EventLoop, ControlFlow};
 
 // Constants
-const WINDOW_TITLE: &'static str = "03.Physical Device Selection";
-
-struct QueueFamilyIndices {
-    graphics_family: Option<u32>,
-}
-
-impl QueueFamilyIndices {
-    pub fn is_complete(&self) -> bool {
-        self.graphics_family.is_some()
-    }
-}
+const WINDOW_TITLE: &'static str = "Graphics Pipeline";
 
 struct VulkanApp {
 
-    // vulkan stuff
     _entry: ash::Entry,
     instance: ash::Instance,
+    surface_loader: ash::extensions::khr::Surface,
+    surface: vk::SurfaceKHR,
     debug_utils_loader: ash::extensions::ext::DebugUtils,
     debug_merssager: vk::DebugUtilsMessengerEXT,
+
     _physical_device: vk::PhysicalDevice,
+    device: ash::Device,
+
+    _graphics_queue: vk::Queue,
+    _present_queue: vk::Queue,
+
+    swapchain_loader: ash::extensions::khr::Swapchain,
+    swapchain: vk::SwapchainKHR,
+    _swapchain_images: Vec<vk::Image>,
+    _swapchain_format: vk::Format,
+    _swapchain_extent: vk::Extent2D,
+    swapchain_imageviews: Vec<vk::ImageView>,
+
 }
 
 impl VulkanApp {
-    pub fn new() -> VulkanApp {
+    pub fn new(window: &winit::window::Window) -> VulkanApp {
 
-        // init vulkan stuff
         let entry = ash::Entry::new().unwrap();
         let instance = share::create_instance(
             &entry,
@@ -45,163 +48,64 @@ impl VulkanApp {
             VALIDATION.is_enable,
             &VALIDATION.required_validation_layers.to_vec(),
         );
-
+        let surface_stuff =
+            share::create_surface(&entry, &instance, &window, WINDOW_WIDTH, WINDOW_HEIGHT);
         let (debug_utils_loader, debug_merssager) =
-            utility::debug::setup_debug_utils(VALIDATION.is_enable, &entry, &instance);
-        let physical_device = VulkanApp::pick_physical_device(&instance);
+            setup_debug_utils(VALIDATION.is_enable, &entry, &instance);
+        let physical_device =
+            share::pick_physical_device(&instance, &surface_stuff, &DEVICE_EXTENSIONS);
+        let (device, family_indices) = share::create_logical_device(
+            &instance,
+            physical_device,
+            &VALIDATION,
+            &DEVICE_EXTENSIONS,
+            &surface_stuff,
+        );
+        let graphics_queue =
+            unsafe { device.get_device_queue(family_indices.graphics_family.unwrap(), 0) };
+        let present_queue =
+            unsafe { device.get_device_queue(family_indices.present_family.unwrap(), 0) };
+        let swapchain_stuff = share::create_swapchain(
+            &instance,
+            &device,
+            physical_device,
+            &window,
+            &surface_stuff,
+            &family_indices,
+        );
+        let swapchain_imageviews = share::v1::create_image_views(
+            &device,
+            swapchain_stuff.swapchain_format,
+            &swapchain_stuff.swapchain_images,
+        );
+        let _graphics_pipeline = VulkanApp::create_graphics_pipeline();
 
         // cleanup(); the 'drop' function will take care of it.
         VulkanApp {
-
             _entry: entry,
             instance,
+            surface: surface_stuff.surface,
+            surface_loader: surface_stuff.surface_loader,
             debug_utils_loader,
             debug_merssager,
+
             _physical_device: physical_device,
+            device,
+
+            _graphics_queue: graphics_queue,
+            _present_queue: present_queue,
+
+            swapchain_loader: swapchain_stuff.swapchain_loader,
+            swapchain: swapchain_stuff.swapchain,
+            _swapchain_format: swapchain_stuff.swapchain_format,
+            _swapchain_images: swapchain_stuff.swapchain_images,
+            _swapchain_extent: swapchain_stuff.swapchain_extent,
+            swapchain_imageviews,
         }
     }
 
-    fn pick_physical_device(instance: &ash::Instance) -> vk::PhysicalDevice {
-        let physical_devices = unsafe {
-            instance
-                .enumerate_physical_devices()
-                .expect("Failed to enumerate Physical Devices!")
-        };
-
-        println!(
-            "{} devices (GPU) found with vulkan support.",
-            physical_devices.len()
-        );
-
-        let mut result = None;
-        for &physical_device in physical_devices.iter() {
-            if VulkanApp::is_physical_device_suitable(instance, physical_device) {
-                if result.is_none() {
-                    result = Some(physical_device)
-                }
-            }
-        }
-
-        match result {
-            None => panic!("Failed to find a suitable GPU!"),
-            Some(physical_device) => physical_device,
-        }
-    }
-
-    fn is_physical_device_suitable(
-        instance: &ash::Instance,
-        physical_device: vk::PhysicalDevice,
-    ) -> bool {
-        let device_properties = unsafe { instance.get_physical_device_properties(physical_device) };
-        let device_features = unsafe { instance.get_physical_device_features(physical_device) };
-        let device_queue_families =
-            unsafe { instance.get_physical_device_queue_family_properties(physical_device) };
-
-        let device_type = match device_properties.device_type {
-            vk::PhysicalDeviceType::CPU => "Cpu",
-            vk::PhysicalDeviceType::INTEGRATED_GPU => "Integrated GPU",
-            vk::PhysicalDeviceType::DISCRETE_GPU => "Discrete GPU",
-            vk::PhysicalDeviceType::VIRTUAL_GPU => "Virtual GPU",
-            vk::PhysicalDeviceType::OTHER => "Unknown",
-            _ => panic!(),
-        };
-
-        let device_name = utility::tools::vk_to_string(&device_properties.device_name);
-        println!(
-            "\tDevice Name: {}, id: {}, type: {}",
-            device_name, device_properties.device_id, device_type
-        );
-
-        let major_version = vk_version_major!(device_properties.api_version);
-        let minor_version = vk_version_minor!(device_properties.api_version);
-        let patch_version = vk_version_patch!(device_properties.api_version);
-
-        println!(
-            "\tAPI Version: {}.{}.{}",
-            major_version, minor_version, patch_version
-        );
-
-        println!("\tSupport Queue Family: {}", device_queue_families.len());
-        println!("\t\tQueue Count | Graphics, Compute, Transfer, Sparse Binding");
-        for queue_family in device_queue_families.iter() {
-            let is_graphics_support = if queue_family.queue_flags.contains(vk::QueueFlags::GRAPHICS)
-            {
-                "support"
-            } else {
-                "unsupport"
-            };
-            let is_compute_support = if queue_family.queue_flags.contains(vk::QueueFlags::COMPUTE) {
-                "support"
-            } else {
-                "unsupport"
-            };
-            let is_transfer_support = if queue_family.queue_flags.contains(vk::QueueFlags::TRANSFER)
-            {
-                "support"
-            } else {
-                "unsupport"
-            };
-            let is_sparse_support = if queue_family
-                .queue_flags
-                .contains(vk::QueueFlags::SPARSE_BINDING)
-            {
-                "support"
-            } else {
-                "unsupport"
-            };
-
-            println!(
-                "\t\t{}\t    | {},  {},  {},  {}",
-                queue_family.queue_count,
-                is_graphics_support,
-                is_compute_support,
-                is_transfer_support,
-                is_sparse_support
-            );
-        }
-
-        // there are plenty of features
-        println!(
-            "\tGeometry Shader support: {}",
-            if device_features.geometry_shader == 1 {
-                "Support"
-            } else {
-                "Unsupport"
-            }
-        );
-
-        let indices = VulkanApp::find_queue_family(instance, physical_device);
-
-        return indices.is_complete();
-    }
-
-    fn find_queue_family(
-        instance: &ash::Instance,
-        physical_device: vk::PhysicalDevice,
-    ) -> QueueFamilyIndices {
-        let queue_families =
-            unsafe { instance.get_physical_device_queue_family_properties(physical_device) };
-
-        let mut queue_family_indices = QueueFamilyIndices {
-            graphics_family: None,
-        };
-
-        let mut index = 0;
-        for queue_family in queue_families.iter() {
-            if queue_family.queue_count > 0
-                && queue_family.queue_flags.contains(vk::QueueFlags::GRAPHICS)
-            {
-                queue_family_indices.graphics_family = Some(index);
-            }
-
-            if queue_family_indices.is_complete() {
-                break;
-            }
-
-            index += 1;
-        }
-
-        queue_family_indices
+    fn create_graphics_pipeline() {
+        // leave it empty right now
     }
 
     fn draw_frame(&mut self) {
@@ -212,6 +116,15 @@ impl VulkanApp {
 impl Drop for VulkanApp {
     fn drop(&mut self) {
         unsafe {
+            for &imageview in self.swapchain_imageviews.iter() {
+                self.device.destroy_image_view(imageview, None);
+            }
+
+            self.swapchain_loader
+                .destroy_swapchain(self.swapchain, None);
+            self.device.destroy_device(None);
+            self.surface_loader.destroy_surface(self.surface, None);
+
             if VALIDATION.is_enable {
                 self.debug_utils_loader
                     .destroy_debug_utils_messenger(self.debug_merssager, None);
@@ -221,7 +134,6 @@ impl Drop for VulkanApp {
     }
 }
 
-// Fix content -------------------------------------------------------------------------------
 impl VulkanApp {
     pub fn main_loop(mut self, event_loop: EventLoop<()>, window: winit::window::Window) {
 
@@ -261,12 +173,12 @@ impl VulkanApp {
     }
 }
 
-fn main() {
 
+fn main() {
     let event_loop = EventLoop::new();
     let window = utility::window::init_window(&event_loop, WINDOW_TITLE, WINDOW_WIDTH, WINDOW_HEIGHT);
 
-    let vulkan_app = VulkanApp::new();
+    let vulkan_app = VulkanApp::new(&window);
     vulkan_app.main_loop(event_loop, window);
 }
 // -------------------------------------------------------------------------------------------

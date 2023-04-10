@@ -78,11 +78,11 @@ pub fn create_graphics_pipeline(
 ) -> (vk::Pipeline, vk::PipelineLayout) {
     let vert_shader_module = create_shader_module(
         device,
-        include_bytes!("../../../shaders/spv/09-shader-base.vert.spv").to_vec(),
+        include_bytes!("shaders/spv/shader-base.vert.spv").to_vec(),
     );
     let frag_shader_module = create_shader_module(
         device,
-        include_bytes!("../../../shaders/spv/09-shader-base.frag.spv").to_vec(),
+        include_bytes!("shaders/spv/shader-base.frag.spv").to_vec(),
     );
 
     let main_function_name = CString::new("main").unwrap(); // the beginning function name in shader code.

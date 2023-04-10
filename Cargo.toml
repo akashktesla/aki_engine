@@ -6,3 +6,10 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+winit     = "0.20.0"
+ash       = "0.29.0"
+num       = "0.2"
+cgmath    = "0.17.0"
+image     = "0.22"
+memoffset = "0.5.1"
+tobj      = "0.1.10"
